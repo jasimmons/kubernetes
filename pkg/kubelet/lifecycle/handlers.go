@@ -38,9 +38,9 @@ const (
 	maxRespBodyLength = 10 * 1 << 10 // 10KB
 )
 
-type HandlerRunner struct {
-	httpDoer         kubetypes.HttpDoer
-	commandRunner    kubecontainer.ContainerCommandRunner
+type handlerRunner struct {
+	httpDoer         kubetypes.HTTPDoer
+	commandRunner    kubecontainer.CommandRunner
 	containerManager podStatusProvider
 }
 
@@ -48,8 +48,8 @@ type podStatusProvider interface {
 	GetPodStatus(uid types.UID, name, namespace string) (*kubecontainer.PodStatus, error)
 }
 
-func NewHandlerRunner(httpDoer kubetypes.HttpDoer, commandRunner kubecontainer.ContainerCommandRunner, containerManager podStatusProvider) kubecontainer.HandlerRunner {
-	return &HandlerRunner{
+func NewHandlerRunner(httpDoer kubetypes.HTTPDoer, commandRunner kubecontainer.CommandRunner, containerManager podStatusProvider) kubecontainer.HandlerRunner {
+	return &handlerRunner{
 		httpDoer:         httpDoer,
 		commandRunner:    commandRunner,
 		containerManager: containerManager,
@@ -129,7 +129,7 @@ func buildHeader(headerList []v1.HTTPHeader) http.Header {
 	return headers
 }
 
-func (hr *HandlerRunner) runHTTPHandler(pod *v1.Pod, container *v1.Container, handler *v1.Handler) (string, error) {
+func (hr *handlerRunner) runHTTPHandler(pod *v1.Pod, container *v1.Container, handler *v1.Handler) (string, error) {
 	host := handler.HTTPGet.Host
 	if len(host) == 0 {
 		status, err := hr.containerManager.GetPodStatus(pod.UID, pod.Name, pod.Namespace)
@@ -153,7 +153,11 @@ func (hr *HandlerRunner) runHTTPHandler(pod *v1.Pod, container *v1.Container, ha
 		}
 	}
 	path := handler.HTTPGet.Path
-	url := formatURL("http", host, port, path)
+	scheme := "http"
+	if string(handler.HTTPGet.Scheme) != "" {
+		scheme = string(handler.HTTPGet.Scheme)
+	}
+	url := formatURL(scheme, host, port, path)
 
 	req, err := http.NewRequest(http.MethodGet, url.String(), nil)
 	if err != nil {
@@ -162,7 +166,7 @@ func (hr *HandlerRunner) runHTTPHandler(pod *v1.Pod, container *v1.Container, ha
 	req.Header = buildHeader(handler.HTTPGet.HTTPHeaders)
 	resp, err := hr.httpDoer.Do(req)
 
-	return getHttpRespBody(resp), err
+	return getHTTPRespBody(resp), err
 }
 
 func getHTTPRespBody(resp *http.Response) string {
