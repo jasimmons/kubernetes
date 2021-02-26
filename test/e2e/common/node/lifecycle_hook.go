@@ -25,7 +25,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/kubernetes/test/e2e/framework"
-	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	"github.com/onsi/ginkgo"
@@ -42,13 +41,42 @@ var _ = SIGDescribe("Container Lifecycle Hook", func() {
 	)
 	ginkgo.Context("when create a pod with lifecycle hook", func() {
 		var targetIP, targetURL string
-		ports := []v1.ContainerPort{
-			{
-				ContainerPort: 8080,
-				Protocol:      v1.ProtocolTCP,
+		podHandleHookRequest := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pod-handle-http-request",
+			},
+			Spec: v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "pod-handle-http-request",
+						Image: imageutils.GetE2EImage(imageutils.Agnhost),
+						Args:  []string{"netexec"},
+						Ports: []v1.ContainerPort{
+							{
+								ContainerPort: 8080,
+								Protocol:      v1.ProtocolTCP,
+							},
+						},
+					},
+					{
+						Name:  "pod-handle-https-request",
+						Image: imageutils.GetE2EImage(imageutils.Agnhost),
+						Args: []string{"netexec",
+							"--http-port", "9090", // https port
+							"--udp-port", "9091", // override udp port so there is no collision
+							"--tls-cert-file", "/localhost.crt", // default tls certificate
+							"--tls-private-key-file", "/localhost.key", // default tls private key
+						},
+						Ports: []v1.ContainerPort{
+							{
+								ContainerPort: 9090,
+								Protocol:      v1.ProtocolTCP,
+							},
+						},
+					},
+				},
 			},
 		}
-		podHandleHookRequest := e2epod.NewAgnhostPod("", "pod-handle-http-request", nil, nil, ports, "netexec")
 		ginkgo.BeforeEach(func() {
 			podClient = f.PodClient()
 			ginkgo.By("create the container to handle the HTTPGet hook request.")
@@ -62,10 +90,20 @@ var _ = SIGDescribe("Container Lifecycle Hook", func() {
 		testPodWithHook := func(podWithHook *v1.Pod) {
 			ginkgo.By("create the pod with lifecycle hook")
 			podClient.CreateSync(podWithHook)
+			const (
+				defaultHandler = iota
+				httpsHandler
+			)
+			handlerContainer := defaultHandler
 			if podWithHook.Spec.Containers[0].Lifecycle.PostStart != nil {
 				ginkgo.By("check poststart hook")
+				if podWithHook.Spec.Containers[0].Lifecycle.PostStart.HTTPGet != nil {
+					if v1.URISchemeHTTPS == podWithHook.Spec.Containers[0].Lifecycle.PostStart.HTTPGet.Scheme {
+						handlerContainer = httpsHandler
+					}
+				}
 				gomega.Eventually(func() error {
-					return podClient.MatchContainerOutput(podHandleHookRequest.Name, podHandleHookRequest.Spec.Containers[0].Name,
+					return podClient.MatchContainerOutput(podHandleHookRequest.Name, podHandleHookRequest.Spec.Containers[handlerContainer].Name,
 						`GET /echo\?msg=poststart`)
 				}, postStartWaitTimeout, podCheckInterval).Should(gomega.BeNil())
 			}
@@ -73,8 +111,13 @@ var _ = SIGDescribe("Container Lifecycle Hook", func() {
 			podClient.DeleteSync(podWithHook.Name, *metav1.NewDeleteOptions(15), framework.DefaultPodDeletionTimeout)
 			if podWithHook.Spec.Containers[0].Lifecycle.PreStop != nil {
 				ginkgo.By("check prestop hook")
+				if podWithHook.Spec.Containers[0].Lifecycle.PreStop.HTTPGet != nil {
+					if v1.URISchemeHTTPS == podWithHook.Spec.Containers[0].Lifecycle.PreStop.HTTPGet.Scheme {
+						handlerContainer = httpsHandler
+					}
+				}
 				gomega.Eventually(func() error {
-					return podClient.MatchContainerOutput(podHandleHookRequest.Name, podHandleHookRequest.Spec.Containers[0].Name,
+					return podClient.MatchContainerOutput(podHandleHookRequest.Name, podHandleHookRequest.Spec.Containers[handlerContainer].Name,
 						`GET /echo\?msg=prestop`)
 				}, preStopWaitTimeout, podCheckInterval).Should(gomega.BeNil())
 			}
@@ -130,20 +173,19 @@ var _ = SIGDescribe("Container Lifecycle Hook", func() {
 			testPodWithHook(podWithHook)
 		})
 		/*
-			Release : v1.20
+			Release : v1.19
 			Testname: Pod Lifecycle, poststart https hook
 			Description: When a post-start handler is specified in the container lifecycle using a 'HttpGet' action, then the handler MUST be invoked before the container is terminated. A server pod is created that will serve https requests, create a second pod with a container lifecycle specifying a post-start that invokes the server pod to validate that the post-start is executed.
 		*/
-		framework.ConformanceIt("should execute poststart https hook properly [NodeConformance]", func() {
-			action := &v1.HTTPGetAction{
-				Scheme: v1.URISchemeHTTPS,
-				Path:   "/echo?msg=poststart",
-				Host:   targetIP,
-				Port:   intstr.FromInt(8080),
-			}
+		ginkgo.It("should execute poststart https hook properly [NodeConformance]", func() {
 			lifecycle := &v1.Lifecycle{
 				PostStart: &v1.Handler{
-					HTTPGet: action,
+					HTTPGet: &v1.HTTPGetAction{
+						Scheme: v1.URISchemeHTTPS,
+						Path:   "/echo?msg=poststart",
+						Host:   targetIP,
+						Port:   intstr.FromInt(9090),
+					},
 				},
 			}
 			podWithHook := getPodWithHook("pod-with-poststart-https-hook", imageutils.GetPauseImageName(), lifecycle)
@@ -168,18 +210,18 @@ var _ = SIGDescribe("Container Lifecycle Hook", func() {
 			testPodWithHook(podWithHook)
 		})
 		/*
-			Release : v1.20
+			Release : v1.19
 			Testname: Pod Lifecycle, prestop https hook
 			Description: When a pre-stop handler is specified in the container lifecycle using a 'HttpGet' action, then the handler MUST be invoked before the container is terminated. A server pod is created that will serve https requests, create a second pod with a container lifecycle specifying a pre-stop that invokes the server pod to validate that the pre-stop is executed.
 		*/
-		framework.ConformanceIt("should execute prestop https hook properly [NodeConformance]", func() {
+		ginkgo.It("should execute prestop https hook properly [NodeConformance]", func() {
 			lifecycle := &v1.Lifecycle{
 				PreStop: &v1.Handler{
 					HTTPGet: &v1.HTTPGetAction{
 						Scheme: v1.URISchemeHTTPS,
 						Path:   "/echo?msg=prestop",
 						Host:   targetIP,
-						Port:   intstr.FromInt(8080),
+						Port:   intstr.FromInt(9090),
 					},
 				},
 			}
