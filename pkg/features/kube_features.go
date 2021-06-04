@@ -723,6 +723,13 @@ const (
 	// Enables apiserver and kubelet to allow up to 32 DNSSearchPaths and up to 2048 DNSSearchListChars.
 	ExpandedDNSConfig featuregate.Feature = "ExpandedDNSConfig"
 
+	// owner: @jasimmons @wzshiming
+	// GA: v1.22
+	//
+	// Normalize HttpGet URL and Header passing for lifecycle handlers with probers.
+	// Lock to default in v1.23 and remove in v1.24.
+	LifecycleHandlerHTTPS featuregate.Feature = "LifecycleHandlerHTTPS"
+
 	// owner: @saschagrunert
 	// alpha: v1.22
 	//
@@ -848,6 +855,7 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	DisableCloudProviders:                          {Default: false, PreRelease: featuregate.Alpha},
 	StatefulSetMinReadySeconds:                     {Default: false, PreRelease: featuregate.Alpha},
 	ExpandedDNSConfig:                              {Default: false, PreRelease: featuregate.Alpha},
+	LifecycleHandlerHTTPS:                          {Default: true, PreRelease: featuregate.GA}, // lock to default in v1.23 and remove in v1.24
 	SeccompDefault:                                 {Default: false, PreRelease: featuregate.Alpha},
 	PodSecurity:                                    {Default: false, PreRelease: featuregate.Alpha},
 	ReadWriteOncePod:                               {Default: false, PreRelease: featuregate.Alpha},
