@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
@@ -205,6 +205,41 @@ func TestRunHandlerHttpWithHeaders(t *testing.T) {
 	}
 	if fakeHTTPDoer.headers["Foo"][0] != "bar" {
 		t.Errorf("missing http header: %s", fakeHTTPDoer.headers)
+	}
+}
+
+func TestRunHandlerHttps(t *testing.T) {
+
+	fakeHTTPDoer := fakeHTTP{}
+	handlerRunner := NewHandlerRunner(&fakeHTTPDoer, &fakeContainerCommandRunner{}, nil)
+
+	containerID := kubecontainer.ContainerID{Type: "test", ID: "abc1234"}
+	containerName := "containerFoo"
+
+	container := v1.Container{
+		Name: containerName,
+		Lifecycle: &v1.Lifecycle{
+			PostStart: &v1.Handler{
+				HTTPGet: &v1.HTTPGetAction{
+					Scheme: v1.URISchemeHTTPS,
+					Host:   "foo",
+					Port:   intstr.FromString(""),
+					Path:   "bar",
+				},
+			},
+		},
+	}
+	pod := v1.Pod{}
+	pod.ObjectMeta.Name = "podFoo"
+	pod.ObjectMeta.Namespace = "nsFoo"
+	pod.Spec.Containers = []v1.Container{container}
+	_, err := handlerRunner.Run(containerID, &pod, &container, container.Lifecycle.PostStart)
+
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if fakeHTTPDoer.url != "https://foo:443/bar" {
+		t.Errorf("unexpected url: %s", fakeHTTPDoer.url)
 	}
 }
 
