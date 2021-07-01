@@ -18,6 +18,7 @@ package kubelet
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -502,6 +503,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 		insecureContainerLifecycleHTTPClient.Transport = insecureTLSTransport
+		insecureContainerLifecycleHTTPClient.CheckRedirect = redirectChecker(false)
 	}
 
 	klet := &Kubelet{
@@ -2348,4 +2350,21 @@ func getStreamingConfig(kubeCfg *kubeletconfiginternal.KubeletConfiguration, kub
 	}
 	config.Addr = net.JoinHostPort("localhost", "0")
 	return config
+}
+
+func redirectChecker(followNonLocalRedirects bool) func(*http.Request, []*http.Request) error {
+	if followNonLocalRedirects {
+		return nil // Use the default http client checker.
+	}
+
+	return func(req *http.Request, via []*http.Request) error {
+		if req.URL.Hostname() != via[0].URL.Hostname() {
+			return http.ErrUseLastResponse
+		}
+		// Default behavior: stop after 10 redirects.
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
 }
